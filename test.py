@@ -7,7 +7,10 @@ from docx.shared import RGBColor, Inches
 from docx.oxml.ns import nsdecls
 from docx.oxml import parse_xml
 from docx.opc.constants import RELATIONSHIP_TYPE
-import docx
+from docx.text.paragraph import Paragraph
+from docx.text.run import Run
+
+# import docx
 from haggis.files.docx import list_number
 from docx.enum.dml import MSO_THEME_COLOR_INDEX
 import traceback
@@ -16,7 +19,8 @@ import typing
 # import lxml
 
 # HTML Content
-html_content = open("test.html", "r").read()  # Replace with the actual HTML content
+# html_content = open("test.html", "r").read()  # Replace with the actual HTML content
+html_content = '<p>test content<span style="color:#dac3ff"> colored text </span><strong>bold<em> text</em></strong></p><p><span style="color:#dac3ff">test content colored text <strong>bold <em>text </em></strong></span></p><p><span style="color:#dac3ff"><strong><em><u>test content colored text bold text</u></em></strong></span></p>'
 
 # Parse HTML with BeautifulSoup
 soup = BeautifulSoup(html_content, "lxml")
@@ -55,17 +59,24 @@ def add_styled_text(paragraph, text, color=None, is_bg_color=False):
     run = paragraph.add_run(text)
     if color:
         try:
-            text_color = color.get("color", "000000")
-            rgb = tuple(int(text_color[i : i + 2], 16) for i in (0, 2, 4))
-            run.font.color.rgb = RGBColor(*rgb)
-            if is_bg_color:
-                bg_color = color.get("background-color", "FFFFFF")
-                # rgb = tuple(int(bg_color[i:i + 2], 16) for i in (0, 2, 4))
-                highlight = parse_xml(
-                    r'<w:shd {} w:fill="{}"/>'.format(nsdecls("w"), bg_color)
-                )
-                parent_element = run._element.getparent()
-                parent_element.insert(parent_element.index(run._element) + 1, highlight)
+            if "color" in color["span"]:
+                text_color = color.get("span").get("color", "000000")
+                rgb = tuple(int(text_color[i : i + 2], 16) for i in (0, 2, 4))
+                run.font.color.rgb = RGBColor(*rgb)
+            if "bold" in color:
+                run.bold = True
+            if "italic" in color:
+                run.italic = True
+            if "underline" in color:
+                run.underline = True
+            # if is_bg_color:
+            #     bg_color = color.get("background-color", "FFFFFF")
+            #     # rgb = tuple(int(bg_color[i:i + 2], 16) for i in (0, 2, 4))
+            #     highlight = parse_xml(
+            #         r'<w:shd {} w:fill="{}"/>'.format(nsdecls("w"), bg_color)
+            #     )
+            #     parent_element = run._element.getparent()
+            #     parent_element.insert(parent_element.index(run._element) + 1, highlight)
         except ValueError:
             pass  # Skip if the color value is invalid
 
@@ -94,25 +105,17 @@ def process_list(list_tag, parent_paragraph=None, level=0):
 
 
 # Function to process tables
-""" def process_table(table_tag):
-    rows = table_tag.find_all('tr')
-    table = doc.add_table(rows=0, cols=len(rows[0].find_all(['th', 'td'])))
-    table.style = 'Table Grid'
-    
+def process_table(table_tag):
+    rows = table_tag.find_all("tr")
+    table = doc.add_table(rows=0, cols=len(rows[0].find_all(["th", "td"])))
+    table.style = "Table Grid"
+
     for row in rows:
-        cells = row.find_all(['th', 'td'])
+        cells = row.find_all(["th", "td"])
         row_cells = table.add_row().cells
         for i, cell in enumerate(cells):
             cell_text = cell.text.strip()
             row_cells[i].text = cell_text
-            # Apply background color to header cells
-            if cell.name == 'th' and 'style' in cell.attrs:
-                bg_color = extract_hex_color(cell['style'])
-                if bg_color:
-                    rgb = tuple(int(bg_color[i:i + 2], 16) for i in (0, 2, 4))
-                    shading = row_cells[i]._tc.get_or_add_tcPr().add_new_shd()
-                    shading.set_val('clear')
-                    shading.set_fill(bg_color) """
 
 
 # Function to add an image
@@ -139,44 +142,80 @@ def add_hyperlink(paragraph, text, url):
     """
     A function that adds a hyperlink to a paragraph.
     """
-    # This gets access to the document.xml.rels file and gets a new relation id value
-    part = paragraph.part
-    r_id = part.relate_to(url, RELATIONSHIP_TYPE.HYPERLINK, is_external=True)
-
-    # Create the w:hyperlink tag and add needed values
-    hyperlink = docx.oxml.shared.OxmlElement('w:hyperlink')
-    hyperlink.set(docx.oxml.ns.qn('r:id'), r_id, )
-
-    # Create a w:r element and a new w:rPr element
-    new_run = docx.oxml.shared.OxmlElement('w:r')
-    rPr = docx.oxml.shared.OxmlElement('w:rPr')
-
-    # Join all the xml elements together add add the required text to the w:r element
-    new_run.append(rPr)
-    new_run.text = text
-    hyperlink.append(new_run)
-
-    # Create a new Run object and add the hyperlink into it
-    r = paragraph.add_run()
-    r._r.append(hyperlink)
-
-    # A workaround for the lack of a hyperlink style (doesn't go purple after using the link)
-    r.font.color.theme_color = MSO_THEME_COLOR_INDEX.HYPERLINK
-    r.font.underline = True
+    pass
 
 
-def set_paragraph_id(paragraph: docx.text.paragraph.Paragraph, p_id: str) -> None:
+def set_paragraph_id(paragraph: Paragraph, p_id: str) -> None:
     """Sets paragraph ID using correct Word XML namespace"""
     try:
         # Create paragraph properties element if it doesn't exist
         if not paragraph._element.pPr:
             paragraph._element.get_or_add_pPr()
-            
+
         # Create paragraphId tag with proper namespace
-        para_id = parse_xml(f'<w:paraId w:val="{p_id}" xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"/>')
+        para_id = parse_xml(
+            f'<w:paraId w:val="{p_id}" xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"/>'
+        )
         paragraph._element.pPr.append(para_id)
     except Exception as e:
         print(f"Failed to set paragraph ID: {str(e)}")
+
+
+def parse_styles(tag: Tag) -> dict[str, str]:
+    """Parses styles from a tag and merges them with the existing styles"""
+    style_d = {}
+    if "style" in tag.attrs:
+        style = tag["style"]
+        for s in style.split(";"):
+            key, value = s.split(":")
+            style_d[key.strip()] = (
+                value.strip().lstrip("#") if "#" in value else value.strip()
+            )
+    return style_d
+
+
+def process_p_child_tags(
+    paragraph: Paragraph, tag: Tag, parent_tag: Tag, styles=None
+) -> None:
+    """Processes child tags of a paragraph"""
+    for child in tag.children:
+        ancestors = [tag.name] + [t.name for t in tag.parents]
+        if isinstance(child, str) and child.parent.name == tag.name:
+            if not styles:
+                run = paragraph.add_run()
+                run.text = child
+            else:
+                add_styled_text(paragraph, child, styles)
+        elif child.name == "p":
+            process_p_child_tags(paragraph, child, tag, styles)
+        elif child.name == "span":
+            span_styles = parse_styles(child)
+            styles.update({"span": span_styles})
+            process_p_child_tags(paragraph, child, tag, styles)
+        elif child.name == "strong" or child.name == "b":
+            bold_styles = {"bold": True}
+            styles.update(bold_styles)
+            if "span" not in ancestors:
+                styles["span"] = {}
+            process_p_child_tags(paragraph, child, tag, styles)
+        elif child.name == "em" or child.name == "i":
+            italic_styles = {"italic": True}
+            styles.update(italic_styles)
+            if "strong" not in ancestors and "b" not in ancestors:
+                styles["bold"] = False
+            if "span" not in ancestors:
+                styles["span"] = {}
+            process_p_child_tags(paragraph, child, tag, styles)
+        elif child.name == "u":
+            underline_styles = {"underline": True}
+            styles.update(underline_styles)
+            if "em" != tag.name:
+                styles["italic"] = False
+            if tag.name not in ancestors:
+                styles["bold"] = False
+            if "span" not in ancestors:
+                styles["span"] = {}
+            process_p_child_tags(paragraph, child, tag, styles)
 
 
 # Process the HTML content
@@ -187,8 +226,9 @@ for tag in soup.body.descendants:
         doc.add_heading(tag.text.strip(), level=h_level)
     elif tag.name == "p" and tag.parent.name != "li":
         paragraph = doc.add_paragraph()
+        process_p_child_tags(paragraph, tag, tag, {})
         p_id = tag.get("id", "")
-        if p_id:
+        """ if p_id:
             set_paragraph_id(paragraph, p_id)
         color = {}
         if "style" in tag.attrs:
@@ -204,11 +244,11 @@ for tag in soup.body.descendants:
                     paragraph, child.text.strip(), span_color, is_bg_color=bg_color
                 )
             elif child.name == "img":  # Handle image tags
-                add_image(paragraph, child)
+                add_image(doc, child)
             elif isinstance(child, str):
-                add_styled_text(paragraph, child, color)
+                add_styled_text(paragraph, child, color) """
     elif tag.name == "table":
-        # process_table(tag)
+        process_table(tag)
         pass
     elif tag.name == "ol" or tag.name == "ul" and tag.parent.name != "li":
         process_list(tag)
