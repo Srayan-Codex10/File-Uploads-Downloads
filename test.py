@@ -9,18 +9,22 @@ from docx.oxml import parse_xml
 from docx.opc.constants import RELATIONSHIP_TYPE
 from docx.text.paragraph import Paragraph
 from docx.text.run import Run
+from docx.table import _Cell
 
 # import docx
 from haggis.files.docx import list_number
 from docx.enum.dml import MSO_THEME_COLOR_INDEX
 import traceback
 import typing
+from datetime import datetime
+import os
+import glob
 
 # import lxml
 
 # HTML Content
-# html_content = open("test.html", "r").read()  # Replace with the actual HTML content
-html_content = '<p>test content<span style="color:#dac3ff"> colored text </span><strong>bold<em> text</em></strong></p><p><span style="color:#dac3ff">test content colored text <strong>bold <em>text </em></strong></span></p><p><span style="color:#dac3ff"><strong><em><u>test content colored text bold text</u></em></strong></span></p>'
+html_content = open("test.html", "r").read()  # Replace with the actual HTML content
+# html_content = '<p>Lorem ipsum dolor sit amet,<span style="color:#33ff57">consectetur adipiscing elit</span>. Integer nec odio.</p><p>Praesent libero. Sed cursus ante dapibus diam.<span style="color:#ff33a8;background-color:#d3d3d3">Sed nisi</span>.</p><p id="abd">Nulla quis sem at nibh elementum imperdiet.<span style="color:#33fff5">Duis sagittis ipsum</span>.</p><p id="abd"> Nulla quis <strong><em> <u>sem at </u></em> sem nibh</strong>elementum<b> imperdiet.</b><span style="color:#11afd3"> Duis sagittis ipsum </span>.</p>'
 
 # Parse HTML with BeautifulSoup
 soup = BeautifulSoup(html_content, "lxml")
@@ -64,11 +68,11 @@ def add_styled_text(paragraph, text, color=None, is_bg_color=False):
                 rgb = tuple(int(text_color[i : i + 2], 16) for i in (0, 2, 4))
                 run.font.color.rgb = RGBColor(*rgb)
             if "bold" in color:
-                run.bold = True
+                run.bold = color["bold"]
             if "italic" in color:
-                run.italic = True
+                run.italic = color["italic"]
             if "underline" in color:
-                run.underline = True
+                run.underline = color["underline"]
             # if is_bg_color:
             #     bg_color = color.get("background-color", "FFFFFF")
             #     # rgb = tuple(int(bg_color[i:i + 2], 16) for i in (0, 2, 4))
@@ -82,60 +86,80 @@ def add_styled_text(paragraph, text, color=None, is_bg_color=False):
 
 
 # Function to handle nested lists
-def process_list(list_tag, parent_paragraph=None, level=0):
+def process_list(doc_obj: _Cell, doc: Document, list_tag, parent_paragraph=None, level=1):
     for li in list_tag.find_all("li", recursive=False):
         for child in li.children:
             if child.name != "ol" and child.name != "ul":
-                paragraph = doc.add_paragraph(
+                document_root = doc_obj if doc_obj else doc
+                paragraph = document_root.add_paragraph(
                     style="List Number" if list_tag.name == "ol" else "List Bullet"
                 )
-                paragraph.paragraph_format.left_indent = Inches(level * 0.5)
+                paragraph.paragraph_format.left_indent = Inches(level * 0.25)
             if child.name == "a":  # Handle anchor tags
                 add_styled_text(paragraph, child.text.strip())
-            elif child.name == "span":
-                span_color = extract_hex_color(child.get("style", ""))
-                add_styled_text(paragraph, child.text.strip(), span_color)
+            # elif child.name == "span":
+            #     span_color = extract_hex_color(child.get("style", ""))
+            #     add_styled_text(paragraph, child.text.strip(), span_color)
             elif child.name == "p":
-                add_styled_text(paragraph, child)
+                p_style = parse_styles(child)
+                process_p_child_tags(paragraph, child, li, p_style)
                 if paragraph.style.name == "List Number":
                     list_number(doc, paragraph, prev=parent_paragraph)
                 parent_paragraph = paragraph
             elif child.name == "ol" or child.name == "ul":
-                process_list(child, parent_paragraph=None, level=level + 1)
+                process_list(doc_obj, doc, child, parent_paragraph=None, level=level + 1)
 
 
 # Function to process tables
 def process_table(table_tag):
+
+    def process_table_cell(cell: Tag, docx_cell: _Cell):
+        for tag in cell.children:
+            if tag.name == "p":
+                paragraph = docx_cell.add_paragraph()
+                p_style = parse_styles(tag)
+                process_p_child_tags(paragraph, tag, cell, p_style)
+            elif tag.name == "img":
+                img_data = add_image(doc, tag)
+                if isinstance(img_data, BytesIO):
+                    docx_cell.add_paragraph().add_run().add_picture(img_data)
+                elif isinstance(img_data, str):
+                    docx_cell.add_paragraph(img_data)
+            elif tag.name == "ul" or tag.name == "ol":
+                process_list(docx_cell, doc, tag)
+                docx_cell.width = Inches(8.0)
+            elif isinstance(tag, str):
+                docx_cell.add_paragraph(tag)
+
     rows = table_tag.find_all("tr")
     table = doc.add_table(rows=0, cols=len(rows[0].find_all(["th", "td"])))
+    table.autofit = False
     table.style = "Table Grid"
 
     for row in rows:
         cells = row.find_all(["th", "td"])
         row_cells = table.add_row().cells
         for i, cell in enumerate(cells):
-            cell_text = cell.text.strip()
-            row_cells[i].text = cell_text
+            process_table_cell(cell, row_cells[i])
 
 
 # Function to add an image
-def add_image(doc: Document, img_tag: Tag):
+def add_image(img_tag: Tag):
     if "src" in img_tag.attrs:
         img_url = img_tag["src"]
         try:
             response = requests.get(img_url)
             response.raise_for_status()
             image = Image.open(BytesIO(response.content))
-            with BytesIO() as img_buffer:
-                image.thumbnail((300, 300))  # Resize image
-                image.save(img_buffer, format=image.format)
-                img_buffer.seek(0)
-                doc.add_picture(img_buffer, width=Inches(2))
+            img_buffer = BytesIO()
+            image.thumbnail((300, 300))  # Resize image
+            image.save(img_buffer, format=image.format)
+            img_buffer.seek(0)
+            return img_buffer
         except Exception as e:
             traceback.print_exc()
             print(f"Failed to load image: {img_url}, Error: {e}")
-            paragraph = doc.add_paragraph()
-            paragraph.add_run(f"[Image not available: {img_url}]")
+            return "Image not found"
 
 
 def add_hyperlink(paragraph, text, url):
@@ -173,7 +197,6 @@ def parse_styles(tag: Tag) -> dict[str, str]:
             )
     return style_d
 
-
 def process_p_child_tags(
     paragraph: Paragraph, tag: Tag, parent_tag: Tag, styles=None
 ) -> None:
@@ -185,6 +208,14 @@ def process_p_child_tags(
                 run = paragraph.add_run()
                 run.text = child
             else:
+                if "strong" not in ancestors and "b" not in ancestors:
+                    styles["bold"] = False
+                if "em" not in ancestors and "i" not in ancestors:
+                    styles["italic"] = False
+                if "u" not in ancestors:
+                    styles["underline"] = False
+                if "span" not in ancestors:
+                    styles["span"] = {}
                 add_styled_text(paragraph, child, styles)
         elif child.name == "p":
             process_p_child_tags(paragraph, child, tag, styles)
@@ -249,12 +280,27 @@ for tag in soup.body.descendants:
                 add_styled_text(paragraph, child, color) """
     elif tag.name == "table":
         process_table(tag)
-        pass
-    elif tag.name == "ol" or tag.name == "ul" and tag.parent.name != "li":
-        process_list(tag)
+    elif (tag.name == "ol" or tag.name == "ul") and tag.parent.name not in ["li", "td", "th"]:
+        process_list(None, doc, tag)
     elif tag.name == "img":
-        add_image(doc, tag)
+        img = add_image(tag)
+        if isinstance(img, BytesIO):
+            doc.add_picture(img)
+            img.close()
+        elif isinstance(img, str):
+            doc.add_paragraph(img)
+
+# Delete previous created .docx files
+docx_files = glob.glob("output_*.docx")
+for file in docx_files:
+    try:
+        os.remove(file)
+        print(f"Deleted file: {file}")
+    except Exception as e:
+        print(f"Failed to delete file: {file}, Error: {e}")
 
 # Save the document
-doc.save("output.docx")
+timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+output_filename = f"output_{timestamp}.docx"
+doc.save(output_filename)
 print("Document created successfully!")
