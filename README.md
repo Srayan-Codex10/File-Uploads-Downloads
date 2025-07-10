@@ -4,5 +4,10 @@
 - import the `html_to_docx` method and run.
 - It will return a BytesIO object, So you will have to do further conversion and write to a file.
 
+### The following packages will be required to install
+> - pil
+> - python-docx
+> - bs4
+> - haggis
 
-### It's a Work in progress. It will be able to run as a CLI command and as a package.
+#### It's a Work in progress. It will be able to run as a CLI command and as a package.
